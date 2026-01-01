@@ -1,0 +1,2 @@
+enum MovementType { expense, income }
+
