@@ -10,11 +10,12 @@ import 'package:app_gestor_financiero/features/movements/presentation/widgets/em
 import 'package:app_gestor_financiero/features/movements/presentation/providers/share_providers.dart';
 import 'package:app_gestor_financiero/features/movements/presentation/widgets/confirmation_dialog.dart';
 import 'package:app_gestor_financiero/features/movements/domain/entities/movement_type.dart';
-import 'package:app_gestor_financiero/features/movements/presentation/helpers/movements_mock_data.dart';
 import 'package:app_gestor_financiero/features/movements/presentation/helpers/movement_filters_helper.dart';
 import 'package:app_gestor_financiero/features/movements/presentation/helpers/movement_grouping_helper.dart';
 import 'package:app_gestor_financiero/features/movements/presentation/helpers/movements_actions_helper.dart';
 import 'package:app_gestor_financiero/features/movements/presentation/widgets/filter_bottom_sheet.dart';
+import 'package:app_gestor_financiero/features/movements/data/providers/movements_providers.dart';
+import 'package:app_gestor_financiero/features/movements/presentation/widgets/movement_form_sheet.dart';
 
 class MovementsPage extends ConsumerStatefulWidget {
   final String? highlightMovementId;
@@ -33,13 +34,10 @@ class MovementsPage extends ConsumerStatefulWidget {
 class _MovementsPageState extends ConsumerState<MovementsPage> {
   String _searchQuery = '';
   final Map<String, MovementFilterChip> _activeFilters = {};
-  List<MovementItem> _allMovements = [];
-  List<MovementItem> _filteredMovements = [];
 
   @override
   void initState() {
     super.initState();
-    _loadMovements();
     _initializeFilters();
     if (widget.highlightMovementId != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -59,15 +57,8 @@ class _MovementsPageState extends ConsumerState<MovementsPage> {
     });
   }
 
-  void _loadMovements() {
-    setState(() {
-      _allMovements = MovementsMockData.getSampleMovements();
-      _applyFilters();
-    });
-  }
-
-  void _applyFilters() {
-    var filtered = List<MovementItem>.from(_allMovements);
+  List<MovementItem> _applyFilters(List<MovementItem> allMovements) {
+    var filtered = List<MovementItem>.from(allMovements);
     if (_searchQuery.isNotEmpty) {
       filtered = filtered.where((movement) {
         return movement.description
@@ -76,23 +67,19 @@ class _MovementsPageState extends ConsumerState<MovementsPage> {
       }).toList();
     }
     filtered.sort((a, b) => b.date.compareTo(a.date));
-    setState(() {
-      _filteredMovements = filtered;
-    });
+    return filtered;
   }
 
   void _onSearchChanged(String query) {
     setState(() {
       _searchQuery = query;
     });
-    _applyFilters();
   }
 
   void _onFilterRemoved(String filterId) {
     setState(() {
       _activeFilters.remove(filterId);
     });
-    _applyFilters();
   }
 
   void _onAddFilter() {
@@ -100,24 +87,28 @@ class _MovementsPageState extends ConsumerState<MovementsPage> {
   }
 
   void _onExportTap() async {
-    try {
-      final exportUseCase = ref.read(exportMovementsUseCaseProvider);
-      final formattedContent = exportUseCase(_filteredMovements);
-      final shareService = ref.read(shareServiceProvider);
-      await shareService.shareText(
-        content: formattedContent,
-        subject: 'Exportación de Movimientos',
-      );
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error al exportar: $e'),
-            backgroundColor: Colors.red,
-          ),
+    final movementsAsync = ref.read(movementsStreamProvider);
+    movementsAsync.whenData((movements) async {
+      try {
+        final exportUseCase = ref.read(exportMovementsUseCaseProvider);
+        final filteredMovements = _applyFilters(movements);
+        final formattedContent = exportUseCase(filteredMovements);
+        final shareService = ref.read(shareServiceProvider);
+        await shareService.shareText(
+          content: formattedContent,
+          subject: 'Exportación de Movimientos',
         );
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error al exportar: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
       }
-    }
+    });
   }
 
   void _onItemTap(String id) {
@@ -126,38 +117,34 @@ class _MovementsPageState extends ConsumerState<MovementsPage> {
   }
 
   void _onItemEdit(String id) {
-    final movement = _allMovements.firstWhere((m) => m.id == id);
-    
-    MovementsActionsHelper.showEditForm(
+    MovementFormSheet.show(
       context,
-      movement,
-      () {
-        _loadMovements();
-        MovementsActionsHelper.showSuccessSnackBar(
-          context,
-          'Movimiento actualizado',
-        );
+      movementId: id,
+      onSaved: () {
+        if (mounted) {
+          MovementsActionsHelper.showSuccessSnackBar(
+            context,
+            'Movimiento actualizado',
+          );
+        }
       },
     );
   }
 
-  void _onItemDelete(String id) {
-    final movement = _allMovements.firstWhere((m) => m.id == id);
-    
-    ConfirmationDialog.show(
+  void _onItemDelete(String id) async {
+    final confirmed = await ConfirmationDialog.show(
       context,
       title: 'Eliminar Movimiento',
-      message: '¿Estás seguro de que deseas eliminar "${movement.description}"?\n\nEsta acción no se puede deshacer.',
+      message: '¿Estás seguro de que deseas eliminar este movimiento?\n\nEsta acción no se puede deshacer.',
       confirmText: 'Eliminar',
       cancelText: 'Cancelar',
       isDestructive: true,
-    ).then((confirmed) {
-      if (confirmed == true) {
-        HapticFeedback.mediumImpact();
-        setState(() {
-          _allMovements.removeWhere((m) => m.id == id);
-        });
-        _applyFilters();
+    );
+
+    if (confirmed == true) {
+      HapticFeedback.mediumImpact();
+      try {
+        await ref.read(deleteMovementProvider(id).future);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -166,19 +153,25 @@ class _MovementsPageState extends ConsumerState<MovementsPage> {
             ),
           );
         }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error al eliminar: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
       }
-    });
+    }
   }
 
   void _scrollToHighlighted() {}
 
-  void _onRefresh() {
-    _loadMovements();
-  }
-
-  List<Widget> _buildGroupedSlivers() {
+  List<Widget> _buildGroupedSlivers(List<MovementItem> movements) {
+    final filteredMovements = _applyFilters(movements);
     return MovementGroupingHelper.buildGroupedSlivers(
-      movements: _filteredMovements,
+      movements: filteredMovements,
       highlightMovementId: widget.highlightMovementId,
       onItemTap: _onItemTap,
       onItemEdit: _onItemEdit,
@@ -188,6 +181,8 @@ class _MovementsPageState extends ConsumerState<MovementsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final movementsAsync = ref.watch(movementsStreamProvider);
+
     return Scaffold(
       backgroundColor: const Color(0xFF050B18),
       body: Stack(
@@ -195,50 +190,68 @@ class _MovementsPageState extends ConsumerState<MovementsPage> {
           Positioned.fill(
             child: SafeArea(
               bottom: false,
-              child: RefreshIndicator(
-                onRefresh: () async {
-                  _onRefresh();
-                },
-                color: const Color(0xFF7E57C2),
-                backgroundColor: Colors.white.withOpacity(0.1),
-                child: CustomScrollView(
-                  physics: const AlwaysScrollableScrollPhysics(
-                    parent: BouncingScrollPhysics(),
-                  ),
-                  slivers: [
-                    SliverSearchAppBar(
-                      searchQuery: _searchQuery.isEmpty ? null : _searchQuery,
-                      onSearchChanged: _onSearchChanged,
-                      onFilterTap: _onAddFilter,
-                      onExportTap: _onExportTap,
-                    ),
-                    if (_activeFilters.isNotEmpty)
-                      SliverToBoxAdapter(
-                        child: FilterChipBar(
-                          filters: _activeFilters.values.toList(),
-                          onFilterRemoved: _onFilterRemoved,
-                          onAddFilter: _onAddFilter,
-                        ),
+              child: movementsAsync.when(
+                data: (movements) {
+                  final filteredMovements = _applyFilters(movements);
+                  return RefreshIndicator(
+                    onRefresh: () async {
+                      ref.invalidate(movementsStreamProvider);
+                    },
+                    color: const Color(0xFF7E57C2),
+                    backgroundColor: Colors.white.withOpacity(0.1),
+                    child: CustomScrollView(
+                      physics: const AlwaysScrollableScrollPhysics(
+                        parent: BouncingScrollPhysics(),
                       ),
-                    if (_filteredMovements.isEmpty)
-                      SliverFillRemaining(
-                        hasScrollBody: false,
-                        child: EmptyStateIllustrator(
-                          title: 'No hay movimientos',
-                          subtitle: _searchQuery.isNotEmpty || _activeFilters.isNotEmpty
-                              ? 'No se encontraron movimientos con los filtros aplicados'
-                              : 'Agrega tu primer movimiento para comenzar',
-                          actionLabel: _searchQuery.isNotEmpty || _activeFilters.isNotEmpty
-                              ? null
-                              : 'Agregar Movimiento',
-                          onAction: _searchQuery.isNotEmpty || _activeFilters.isNotEmpty
-                              ? null
-                              : () {},
+                      slivers: [
+                        SliverSearchAppBar(
+                          searchQuery: _searchQuery.isEmpty ? null : _searchQuery,
+                          onSearchChanged: _onSearchChanged,
+                          onFilterTap: _onAddFilter,
+                          onExportTap: _onExportTap,
                         ),
-                      )
-                    else
-                      ..._buildGroupedSlivers(),
-                  ],
+                        if (_activeFilters.isNotEmpty)
+                          SliverToBoxAdapter(
+                            child: FilterChipBar(
+                              filters: _activeFilters.values.toList(),
+                              onFilterRemoved: _onFilterRemoved,
+                              onAddFilter: _onAddFilter,
+                            ),
+                          ),
+                        if (filteredMovements.isEmpty)
+                          SliverFillRemaining(
+                            hasScrollBody: false,
+                            child: EmptyStateIllustrator(
+                              title: 'No hay movimientos',
+                              subtitle: _searchQuery.isNotEmpty || _activeFilters.isNotEmpty
+                                  ? 'No se encontraron movimientos con los filtros aplicados'
+                                  : 'Agrega tu primer movimiento para comenzar',
+                              actionLabel: _searchQuery.isNotEmpty || _activeFilters.isNotEmpty
+                                  ? null
+                                  : 'Agregar Movimiento',
+                              onAction: _searchQuery.isNotEmpty || _activeFilters.isNotEmpty
+                                  ? null
+                                  : () {},
+                            ),
+                          )
+                        else
+                          ..._buildGroupedSlivers(movements),
+                      ],
+                    ),
+                  );
+                },
+                loading: () => const Center(child: CircularProgressIndicator()),
+                error: (error, stack) => Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text('Error: $error'),
+                      ElevatedButton(
+                        onPressed: () => ref.invalidate(movementsStreamProvider),
+                        child: const Text('Reintentar'),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -252,30 +265,32 @@ class _MovementsPageState extends ConsumerState<MovementsPage> {
                     onExpensePressed: () {
                       if (!mounted || !fabContext.mounted) return;
                       
-                      MovementsActionsHelper.showCreateForm(
+                      MovementFormSheet.show(
                         fabContext,
-                        MovementType.expense,
-                        () {
-                          _loadMovements();
-                          MovementsActionsHelper.showSuccessSnackBar(
-                            fabContext,
-                            'Gasto creado exitosamente',
-                          );
+                        initialType: MovementType.expense,
+                        onSaved: () {
+                          if (fabContext.mounted) {
+                            MovementsActionsHelper.showSuccessSnackBar(
+                              fabContext,
+                              'Gasto creado exitosamente',
+                            );
+                          }
                         },
                       );
                     },
                     onIncomePressed: () {
                       if (!mounted || !fabContext.mounted) return;
                       
-                      MovementsActionsHelper.showCreateForm(
+                      MovementFormSheet.show(
                         fabContext,
-                        MovementType.income,
-                        () {
-                          _loadMovements();
-                          MovementsActionsHelper.showSuccessSnackBar(
-                            fabContext,
-                            'Ingreso creado exitosamente',
-                          );
+                        initialType: MovementType.income,
+                        onSaved: () {
+                          if (fabContext.mounted) {
+                            MovementsActionsHelper.showSuccessSnackBar(
+                              fabContext,
+                              'Ingreso creado exitosamente',
+                            );
+                          }
                         },
                       );
                     },

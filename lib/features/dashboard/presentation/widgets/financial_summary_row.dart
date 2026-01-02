@@ -1,14 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:app_gestor_financiero/features/dashboard/presentation/widgets/dashboard_info_card.dart';
+import 'package:app_gestor_financiero/features/dashboard/data/providers/dashboard_providers.dart';
 
-class FinancialSummaryRow extends StatefulWidget {
+class FinancialSummaryRow extends ConsumerStatefulWidget {
   const FinancialSummaryRow({super.key});
 
   @override
-  State<FinancialSummaryRow> createState() => _FinancialSummaryRowState();
+  ConsumerState<FinancialSummaryRow> createState() => _FinancialSummaryRowState();
 }
 
-class _FinancialSummaryRowState extends State<FinancialSummaryRow> with SingleTickerProviderStateMixin {
+class _FinancialSummaryRowState extends ConsumerState<FinancialSummaryRow> with SingleTickerProviderStateMixin {
   late AnimationController _controller;
 
   @override
@@ -29,53 +31,61 @@ class _FinancialSummaryRowState extends State<FinancialSummaryRow> with SingleTi
 
   @override
   Widget build(BuildContext context) {
-    final cards = [
-      _buildAnimatedItem(
-        0,
-        const DashboardInfoCard(
-          title: 'PRESUPUESTO RESTANTE',
-          amount: 1560.0,
-          icon: Icons.credit_card,
-        ),
-      ),
-      _buildAnimatedItem(
-        1,
-        const DashboardInfoCard(
-          title: 'PROMEDIO DIARIO',
-          amount: 108.0,
-          icon: Icons.attach_money,
-          iconColor: Color(0xFFE91E63),
-        ),
-      ),
-      _buildAnimatedItem(
-        2,
-        const DashboardInfoCard(
-          title: 'META DE AHORRO',
-          amount: 2500.0,
-          icon: Icons.account_balance_wallet,
-          iconColor: Color(0xFF00C853),
-        ),
-      ),
-    ];
+    final summaryAsync = ref.watch(dashboardSummaryProvider);
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        if (constraints.maxWidth > 600) {
-          return Row(
-            children: cards.map((c) => Expanded(child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8.0),
-              child: c,
-            ))).toList(),
-          );
-        } else {
-          return Column(
-            children: cards.map((c) => Padding(
-              padding: const EdgeInsets.only(bottom: 16.0),
-              child: c,
-            )).toList(),
-          );
-        }
+    return summaryAsync.when(
+      data: (summary) {
+        final cards = [
+          _buildAnimatedItem(
+            0,
+            DashboardInfoCard(
+              title: 'PRESUPUESTO RESTANTE',
+              amount: summary.budgetRemaining ?? 0.0,
+              icon: Icons.credit_card,
+            ),
+          ),
+          _buildAnimatedItem(
+            1,
+            DashboardInfoCard(
+              title: 'PROMEDIO DIARIO',
+              amount: summary.averageDaily,
+              icon: Icons.attach_money,
+              iconColor: const Color(0xFFE91E63),
+            ),
+          ),
+          _buildAnimatedItem(
+            2,
+            DashboardInfoCard(
+              title: 'META DE AHORRO',
+              amount: summary.balance > 0 ? summary.balance : 0.0,
+              icon: Icons.account_balance_wallet,
+              iconColor: const Color(0xFF00C853),
+            ),
+          ),
+        ];
+
+        return LayoutBuilder(
+          builder: (context, constraints) {
+            if (constraints.maxWidth > 600) {
+              return Row(
+                children: cards.map((c) => Expanded(child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                  child: c,
+                ))).toList(),
+              );
+            } else {
+              return Column(
+                children: cards.map((c) => Padding(
+                  padding: const EdgeInsets.only(bottom: 16.0),
+                  child: c,
+                )).toList(),
+              );
+            }
+          },
+        );
       },
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (error, stack) => Text('Error: $error'),
     );
   }
 
