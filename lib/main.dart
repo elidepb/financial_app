@@ -3,9 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 import 'package:app_gestor_financiero/core/router/app_router.dart';
-import 'package:app_gestor_financiero/core/router/deep_link_config.dart';
 import 'package:app_gestor_financiero/core/theme/theme_provider.dart';
 import 'package:intl/date_symbol_data_local.dart';
 

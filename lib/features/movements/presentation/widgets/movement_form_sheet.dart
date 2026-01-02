@@ -1,16 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:ui';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:app_gestor_financiero/core/constants/app_dimensions.dart';
 import 'package:app_gestor_financiero/features/movements/domain/entities/movement_type.dart';
 import 'package:app_gestor_financiero/features/movements/presentation/widgets/form_action_buttons.dart';
-import 'package:app_gestor_financiero/features/movements/presentation/helpers/movement_form_data.dart';
 import 'package:app_gestor_financiero/features/movements/presentation/widgets/movement_form_header.dart';
 import 'package:app_gestor_financiero/features/movements/presentation/widgets/movement_form_container.dart';
 import 'package:app_gestor_financiero/features/movements/presentation/widgets/movement_form_fields.dart';
-import 'package:app_gestor_financiero/features/movements/presentation/widgets/category_dropdown.dart';
+import 'package:app_gestor_financiero/features/movements/data/providers/movements_providers.dart';
+import 'package:app_gestor_financiero/features/movements/data/providers/movement_detail_provider.dart';
+import 'package:app_gestor_financiero/features/categories/data/providers/categories_providers.dart';
+import 'package:app_gestor_financiero/database/mappers/category_mapper.dart';
+import 'package:app_gestor_financiero/database/app_database.dart';
 
-class MovementFormSheet extends StatefulWidget {
+class MovementFormSheet extends ConsumerStatefulWidget {
   final String? movementId;
   final MovementType? initialType;
   final VoidCallback? onSaved;
@@ -74,10 +78,10 @@ class MovementFormSheet extends StatefulWidget {
   }
 
   @override
-  State<MovementFormSheet> createState() => _MovementFormSheetState();
+  ConsumerState<MovementFormSheet> createState() => _MovementFormSheetState();
 }
 
-class _MovementFormSheetState extends State<MovementFormSheet> {
+class _MovementFormSheetState extends ConsumerState<MovementFormSheet> {
   final _formKey = GlobalKey<FormState>();
   final _scrollController = ScrollController();
 
@@ -88,47 +92,116 @@ class _MovementFormSheetState extends State<MovementFormSheet> {
   String _description = '';
   String _notes = '';
   bool _isSaving = false;
-
-  final List<CategoryOption> _categories = MovementFormDataHelper.getDefaultCategories();
+  String? _currentMovementId;
+  int _formKeyVersion = 0;
 
   @override
   void initState() {
     super.initState();
+    _initializeForm();
+  }
+
+  void _initializeForm() {
     if (widget.initialType != null) {
       _type = widget.initialType!;
     }
-    if (widget.movementId != null) {
-      _loadMovementData();
+    _currentMovementId = widget.movementId;
+    
+    // Resetear valores si no hay movementId (modo creación)
+    if (widget.movementId == null) {
+      _resetFormToDefaults();
     }
   }
 
-  void _loadMovementData() {
-    final mockMovements = MovementFormDataHelper.getMockMovements();
-    final movement = mockMovements.firstWhere(
-      (m) => m['id'] == widget.movementId,
-      orElse: () => {},
-    );
+  void _resetFormToDefaults() {
+    _amountValue = null;
+    _description = '';
+    _selectedCategoryId = null;
+    _selectedDate = DateTime.now();
+    _notes = '';
+    if (widget.initialType != null) {
+      _type = widget.initialType!;
+    }
+  }
+
+  @override
+  void didUpdateWidget(MovementFormSheet oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Si cambió el movementId, resetear y cargar nuevos datos
+    if (oldWidget.movementId != widget.movementId) {
+      _currentMovementId = widget.movementId;
+      if (widget.movementId == null) {
+        // Modo creación: resetear a valores por defecto
+        _resetFormToDefaults();
+        _formKeyVersion++;
+      } else {
+        // Modo edición: resetear y esperar a que se carguen los datos
+        _resetFormToDefaults();
+        _formKeyVersion++;
+      }
+    }
+    // Si cambió el initialType y no hay movementId, actualizar el tipo
+    if (oldWidget.initialType != widget.initialType && widget.movementId == null) {
+      if (widget.initialType != null) {
+        _type = widget.initialType!;
+      }
+    }
+  }
+
+  void _loadMovementDataIfNeeded(Movement movement) {
+    if (!mounted || widget.movementId != _currentMovementId) {
+      return;
+    }
     
-    if (movement.isNotEmpty) {
-      setState(() {
-        _type = movement['isExpense'] == true 
-            ? MovementType.expense 
-            : MovementType.income;
-        _amountValue = (movement['amount'] as num).abs().toDouble();
-        _description = movement['description'] ?? '';
-        _selectedCategoryId = MovementFormDataHelper.findCategoryIdByName(
-          movement['category'] ?? '',
-          _categories,
-        );
-        _selectedDate = movement['date'] as DateTime? ?? DateTime.now();
-        _notes = movement['notes'] ?? '';
+    // Verificar si los datos ya están cargados comparando valores
+    final needsUpdate = _amountValue != movement.amount ||
+        _description != movement.description ||
+        _selectedCategoryId != movement.categoryId ||
+        _selectedDate != movement.date ||
+        _notes != (movement.notes ?? '') ||
+        _type != (movement.type == 'expense' ? MovementType.expense : MovementType.income);
+    
+    if (needsUpdate) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && widget.movementId == _currentMovementId) {
+          _loadMovementData(movement);
+        }
       });
     }
+  }
+
+  void _loadMovementData(Movement movement) {
+    if (!mounted || widget.movementId != _currentMovementId) {
+      return;
+    }
+    
+    setState(() {
+      _type = movement.type == 'expense' ? MovementType.expense : MovementType.income;
+      _amountValue = movement.amount;
+      _description = movement.description;
+      _selectedCategoryId = movement.categoryId;
+      _selectedDate = movement.date;
+      _notes = movement.notes ?? '';
+      _formKeyVersion++;
+    });
+  }
+
+  List<CategoryOption> _getCategories() {
+    final categoriesAsync = ref.watch(categoriesByTypeProvider(_type == MovementType.expense ? 'expense' : 'income'));
+    return categoriesAsync.when(
+      data: (categories) => CategoryMapper.toCategoryOptions(categories),
+      loading: () => [],
+      error: (_, __) => [],
+    );
   }
 
   void _handleSave() async {
     if (!_formKey.currentState!.validate()) {
       HapticFeedback.mediumImpact();
+      return;
+    }
+
+    if (_amountValue == null || _selectedCategoryId == null) {
       return;
     }
 
@@ -138,15 +211,47 @@ class _MovementFormSheetState extends State<MovementFormSheet> {
 
     HapticFeedback.mediumImpact();
 
-    await Future.delayed(const Duration(milliseconds: 500));
+    try {
+      if (widget.movementId != null) {
+        await ref.read(updateMovementProvider(UpdateMovementParams(
+          id: widget.movementId!,
+          amount: _amountValue!,
+          description: _description,
+          categoryId: _selectedCategoryId!,
+          date: _selectedDate,
+          type: _type == MovementType.expense ? 'expense' : 'income',
+          notes: _notes.isEmpty ? null : _notes,
+        )).future);
+      } else {
+        await ref.read(createMovementProvider(CreateMovementParams(
+          amount: _amountValue!,
+          description: _description,
+          categoryId: _selectedCategoryId!,
+          date: _selectedDate,
+          type: _type == MovementType.expense ? 'expense' : 'income',
+          notes: _notes.isEmpty ? null : _notes,
+        )).future);
+      }
 
-    setState(() {
-      _isSaving = false;
-    });
-
-    if (mounted) {
-      Navigator.of(context).pop();
-      widget.onSaved?.call();
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+        });
+        Navigator.of(context).pop();
+        widget.onSaved?.call();
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al guardar: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -154,6 +259,37 @@ class _MovementFormSheetState extends State<MovementFormSheet> {
   Widget build(BuildContext context) {
     final isMobile = MediaQuery.of(context).size.width <
         AppDimensions.breakpointMobile;
+
+    // Observar y escuchar cambios en el provider del movimiento
+    if (widget.movementId != null && widget.movementId == _currentMovementId) {
+      // Observar el provider para mantener la reactividad
+      final movementAsync = ref.watch(movementDetailProvider(widget.movementId!));
+      
+      // Escuchar cambios en el provider (se ejecuta cuando el estado cambia)
+      // Esto maneja tanto el caso inicial como los cambios posteriores
+      ref.listen<AsyncValue<Movement?>>(
+        movementDetailProvider(widget.movementId!),
+        (previous, next) {
+          // Solo procesar si el estado cambió de loading a data, o si hay datos nuevos
+          if (previous?.isLoading == true || previous?.value != next.value) {
+            next.whenData((movement) {
+              if (movement != null && mounted && widget.movementId == _currentMovementId) {
+                _loadMovementDataIfNeeded(movement);
+              }
+            });
+          }
+        },
+      );
+      
+      // Cargar datos si ya están disponibles en el primer build (caso cuando el provider ya tiene datos en caché)
+      if (movementAsync.hasValue && movementAsync.value != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && widget.movementId == _currentMovementId) {
+            _loadMovementDataIfNeeded(movementAsync.value!);
+          }
+        });
+      }
+    }
 
     final content = MovementFormContainer(
       isMobile: isMobile,
@@ -172,13 +308,14 @@ class _MovementFormSheetState extends State<MovementFormSheet> {
               child: Form(
                 key: _formKey,
                 child: MovementFormFields(
+                  key: ValueKey('form_fields_$_formKeyVersion'),
                   type: _type,
                   amountValue: _amountValue,
                   description: _description,
                   selectedCategoryId: _selectedCategoryId,
                   selectedDate: _selectedDate,
                   notes: _notes,
-                  categories: _categories,
+                  categories: _getCategories(),
                   onTypeChanged: (type) {
                     setState(() {
                       _type = type;

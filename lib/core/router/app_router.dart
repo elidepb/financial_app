@@ -1,4 +1,3 @@
-import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:app_gestor_financiero/core/router/route_paths.dart';
 import 'package:app_gestor_financiero/core/router/deep_link_config.dart';

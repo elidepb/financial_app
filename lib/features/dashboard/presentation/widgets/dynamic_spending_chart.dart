@@ -1,7 +1,9 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:app_gestor_financiero/core/widgets/glass_container.dart';
+import 'package:app_gestor_financiero/features/dashboard/data/providers/dashboard_providers.dart';
 
 class CategoryData {
   final String name;
@@ -17,120 +19,158 @@ class CategoryData {
   });
 }
 
-class DynamicSpendingChart extends StatefulWidget {
-  final Map<String, CategoryData> categoryBreakdown;
-
-  const DynamicSpendingChart({super.key, required this.categoryBreakdown});
+class DynamicSpendingChart extends ConsumerStatefulWidget {
+  const DynamicSpendingChart({super.key});
 
   @override
-  State<DynamicSpendingChart> createState() => _DynamicSpendingChartState();
+  ConsumerState<DynamicSpendingChart> createState() => _DynamicSpendingChartState();
 }
 
-class _DynamicSpendingChartState extends State<DynamicSpendingChart> {
+class _DynamicSpendingChartState extends ConsumerState<DynamicSpendingChart> {
   int _touchedIndex = -1;
   Set<String> _hiddenCategories = {};
 
+  Color _parseColor(String hexColor) {
+    try {
+      final hex = hexColor.replaceAll('#', '');
+      if (hex.length == 6) {
+        return Color(int.parse('FF$hex', radix: 16));
+      } else if (hex.length == 8) {
+        return Color(int.parse(hex, radix: 16));
+      }
+      return Colors.grey;
+    } catch (e) {
+      return Colors.grey;
+    }
+  }
+
+  Map<String, CategoryData> _convertBreakdown(List<CategoryBreakdown> breakdown) {
+    final Map<String, CategoryData> result = {};
+    for (var item in breakdown) {
+      result[item.categoryId] = CategoryData(
+        name: item.name,
+        amount: item.amount,
+        color: _parseColor(item.color),
+      );
+    }
+    return result;
+  }
+
   @override
   Widget build(BuildContext context) {
-    final activeCategories = widget.categoryBreakdown.entries
-        .where((e) => !_hiddenCategories.contains(e.key))
-        .map((e) => e.value)
-        .toList();
-        
-    final total = activeCategories.fold(0.0, (sum, item) => sum + item.amount);
+    final breakdownAsync = ref.watch(categoryBreakdownProvider);
 
-    return GlassContainer(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Gastos por Categoría',
-            style: TextStyle(
-              color: Colors.white, 
-              fontSize: 20, 
-              fontWeight: FontWeight.bold,
-              shadows: [Shadow(color: Colors.black26, blurRadius: 4, offset: Offset(0, 2))],
-            ),
-          ),
-          const SizedBox(height: 40),
-          TweenAnimationBuilder<double>(
-            tween: Tween<double>(begin: 0, end: 1),
-            duration: const Duration(seconds: 1),
-            curve: Curves.easeOutCirc,
-            builder: (context, animValue, child) {
-              return SizedBox(
-                height: 250,
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    PieChart(
-                      PieChartData(
-                        pieTouchData: PieTouchData(
-                          touchCallback: (FlTouchEvent event, pieTouchResponse) {
-                            setState(() {
-                              if (!event.isInterestedForInteractions ||
-                                  pieTouchResponse == null ||
-                                  pieTouchResponse.touchedSection == null) {
-                                _touchedIndex = -1;
-                                return;
-                              }
-                              _touchedIndex = pieTouchResponse.touchedSection!.touchedSectionIndex;
-                            });
-                          },
-                        ),
-                        sectionsSpace: 4,
-                        centerSpaceRadius: 80,
-                        startDegreeOffset: -90 * animValue,
-                        sections: _buildSections(activeCategories, animValue),
-                      ),
-                    ),
-                    Column(
-                      mainAxisSize: MainAxisSize.min,
+    return breakdownAsync.when(
+      data: (breakdown) {
+        final categoryBreakdown = _convertBreakdown(breakdown);
+        final activeCategories = categoryBreakdown.values
+            .where((e) => !_hiddenCategories.contains(e.name))
+            .toList();
+            
+        final total = activeCategories.fold(0.0, (sum, item) => sum + item.amount);
+
+        return GlassContainer(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Gastos por Categoría',
+                style: TextStyle(
+                  color: Colors.white, 
+                  fontSize: 20, 
+                  fontWeight: FontWeight.bold,
+                  shadows: [Shadow(color: Colors.black26, blurRadius: 4, offset: Offset(0, 2))],
+                ),
+              ),
+              const SizedBox(height: 40),
+              TweenAnimationBuilder<double>(
+                tween: Tween<double>(begin: 0, end: 1),
+                duration: const Duration(seconds: 1),
+                curve: Curves.easeOutCirc,
+                builder: (context, animValue, child) {
+                  return SizedBox(
+                    height: 250,
+                    child: Stack(
+                      alignment: Alignment.center,
                       children: [
-                        Text(
-                          'TOTAL',
-                          style: TextStyle(
-                            color: Colors.white.withOpacity(0.6), 
-                            fontSize: 12, 
-                            fontWeight: FontWeight.bold
+                        PieChart(
+                          PieChartData(
+                            pieTouchData: PieTouchData(
+                              touchCallback: (FlTouchEvent event, pieTouchResponse) {
+                                setState(() {
+                                  if (!event.isInterestedForInteractions ||
+                                      pieTouchResponse == null ||
+                                      pieTouchResponse.touchedSection == null) {
+                                    _touchedIndex = -1;
+                                    return;
+                                  }
+                                  _touchedIndex = pieTouchResponse.touchedSection!.touchedSectionIndex;
+                                });
+                              },
+                            ),
+                            sectionsSpace: 4,
+                            centerSpaceRadius: 80,
+                            startDegreeOffset: -90 * animValue,
+                            sections: _buildSections(activeCategories, animValue),
                           ),
                         ),
-                        Text(
-                          '\$${total.toStringAsFixed(1)}',
-                          style: const TextStyle(
-                            color: Colors.white, 
-                            fontSize: 28, 
-                            fontWeight: FontWeight.bold
-                          ),
+                        Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              'TOTAL',
+                              style: TextStyle(
+                                color: Colors.white.withOpacity(0.6), 
+                                fontSize: 12, 
+                                fontWeight: FontWeight.bold
+                              ),
+                            ),
+                            Text(
+                              '\$${total.toStringAsFixed(1)}',
+                              style: const TextStyle(
+                                color: Colors.white, 
+                                fontSize: 28, 
+                                fontWeight: FontWeight.bold
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
-                  ],
-                ),
-              );
-            },
-          ),
-          const SizedBox(height: 40),
-          Wrap(
-            spacing: 20,
-            runSpacing: 12,
-            children: widget.categoryBreakdown.entries.map((entry) {
-              return GestureDetector(
-                onTap: () {
-                  setState(() {
-                    if (_hiddenCategories.contains(entry.key)) {
-                      _hiddenCategories.remove(entry.key);
-                    } else {
-                      _hiddenCategories.add(entry.key);
-                    }
-                  });
+                  );
                 },
-                child: _buildLegendItem(entry.value, !_hiddenCategories.contains(entry.key)),
-              );
-            }).toList(),
+              ),
+              const SizedBox(height: 40),
+              Wrap(
+                spacing: 20,
+                runSpacing: 12,
+                children: categoryBreakdown.entries.map((entry) {
+                  return GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        if (_hiddenCategories.contains(entry.value.name)) {
+                          _hiddenCategories.remove(entry.value.name);
+                        } else {
+                          _hiddenCategories.add(entry.value.name);
+                        }
+                      });
+                    },
+                    child: _buildLegendItem(entry.value, !_hiddenCategories.contains(entry.value.name)),
+                  );
+                }).toList(),
+              ),
+            ],
           ),
-        ],
+        );
+      },
+      loading: () => GlassContainer(
+        padding: const EdgeInsets.all(24),
+        child: const Center(child: CircularProgressIndicator()),
+      ),
+      error: (error, stack) => GlassContainer(
+        padding: const EdgeInsets.all(24),
+        child: Text('Error: $error'),
       ),
     );
   }
@@ -172,7 +212,7 @@ class _DynamicSpendingChartState extends State<DynamicSpendingChart> {
         boxShadow: const [BoxShadow(color: Colors.black45, blurRadius: 8)],
       ),
       child: Text(
-        '\$${data.amount}',
+        '\$${data.amount.toStringAsFixed(0)}',
         style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
       ),
     );

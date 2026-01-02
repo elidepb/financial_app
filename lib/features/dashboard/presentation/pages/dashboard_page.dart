@@ -10,6 +10,7 @@ import 'package:app_gestor_financiero/features/dashboard/presentation/widgets/re
 import 'package:app_gestor_financiero/features/dashboard/presentation/widgets/financial_summary_row.dart';
 import 'package:app_gestor_financiero/features/movements/presentation/widgets/movement_form_sheet.dart';
 import 'package:app_gestor_financiero/features/movements/domain/entities/movement_type.dart';
+import 'package:app_gestor_financiero/features/movements/data/providers/movements_providers.dart';
 
 class DashboardPage extends ConsumerWidget {
   const DashboardPage({super.key});
@@ -27,48 +28,37 @@ class DashboardPage extends ConsumerWidget {
               children: [
                 _buildWelcomeSection(context),
                 const SizedBox(height: 24),
-                const TotalBalanceCard(
-                  balance: 12450.0,
-                  income: 5800.0,
-                  spent: 3241.0,
-                  percentageChange: 12.5,
-                ),
+                const TotalBalanceCard(),
                 const SizedBox(height: 24),
                 const FinancialSummaryRow(),
                 const SizedBox(height: 24),
-                DynamicSpendingChart(
-                  categoryBreakdown: {
-                    'food': CategoryData(
-                      name: 'Alimentación',
-                      amount: 1200.0,
-                      color: const Color(0xFF7E57C2),
-                      icon: 'restaurant',
-                    ),
-                    'transport': CategoryData(
-                      name: 'Transporte',
-                      amount: 800.0,
-                      color: const Color(0xFFE91E63),
-                    ),
-                    'shopping': CategoryData(
-                      name: 'Compras',
-                      amount: 600.0,
-                      color: const Color(0xFF26C6DA),
-                    ),
-                    'housing': CategoryData(
-                      name: 'Hogar',
-                      amount: 640.5,
-                      color: const Color(0xFFFFB300),
-                    ),
-                  },
-                ),
+                const DynamicSpendingChart(),
                 const SizedBox(height: 24),
-                RecentMovementsList(
-                  movements: _getSampleMovements(),
-                  onViewAll: () => context.go(RoutePaths.expenses),
-                  onItemTap: (id) {
-                    MovementFormSheet.show(
-                      context,
-                      movementId: id,
+                Consumer(
+                  builder: (context, ref, child) {
+                    final movementsAsync = ref.watch(movementsStreamProvider);
+                    return movementsAsync.when(
+                      data: (movements) {
+                        if (movements.isEmpty) {
+                          return const SizedBox.shrink();
+                        }
+                        final recentMovements = movements.length > 5 
+                            ? movements.sublist(0, 5) 
+                            : movements;
+                        return RecentMovementsList(
+                          key: const ValueKey('recent_movements_list'),
+                          movements: recentMovements,
+                          onViewAll: () => context.go(RoutePaths.expenses),
+                          onItemTap: (id) {
+                            MovementFormSheet.show(
+                              context,
+                              movementId: id,
+                            );
+                          },
+                        );
+                      },
+                      loading: () => const Center(child: CircularProgressIndicator()),
+                      error: (_, __) => const SizedBox.shrink(),
                     );
                   },
                 ),
@@ -167,32 +157,4 @@ class DashboardPage extends ConsumerWidget {
     );
   }
 
-  List<MovementItem> _getSampleMovements() {
-    return [
-      MovementItem(
-        id: '1',
-        description: 'Supermercado',
-        amount: -84.50,
-        category: 'Alimentación',
-        date: DateTime.now(),
-        isExpense: true,
-      ),
-      MovementItem(
-        id: '2',
-        description: 'Suscripción Netflix',
-        amount: -15.99,
-        category: 'Entretenimiento',
-        date: DateTime.now(),
-        isExpense: true,
-      ),
-      MovementItem(
-        id: '3',
-        description: 'Pago Freelance',
-        amount: 1200.00,
-        category: 'Trabajo',
-        date: DateTime.now(),
-        isExpense: false,
-      ),
-    ];
-  }
 }

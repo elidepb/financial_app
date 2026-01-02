@@ -19,7 +19,7 @@ class MovementItem {
   });
 }
 
-class RecentMovementsList extends StatefulWidget {
+class RecentMovementsList extends StatelessWidget {
   final List<MovementItem> movements;
   final VoidCallback onViewAll;
   final Function(String) onItemTap;
@@ -32,31 +32,14 @@ class RecentMovementsList extends StatefulWidget {
   });
 
   @override
-  State<RecentMovementsList> createState() => _RecentMovementsListState();
-}
-
-class _RecentMovementsListState extends State<RecentMovementsList> {
-  final GlobalKey<AnimatedListState> _listKey = GlobalKey<AnimatedListState>();
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _addItems();
-    });
-  }
-
-  void _addItems() async {
-    for (int i = 0; i < widget.movements.length; i++) {
-      await Future.delayed(const Duration(milliseconds: 100));
-      _listKey.currentState?.insertItem(i);
-    }
-  }
-
-  @override
   Widget build(BuildContext context) {
+    if (movements.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
       children: [
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -71,7 +54,7 @@ class _RecentMovementsListState extends State<RecentMovementsList> {
               ),
             ),
             TextButton(
-              onPressed: widget.onViewAll,
+              onPressed: onViewAll,
               child: const Text(
                 'Ver Todos',
                 style: TextStyle(color: Color(0xFF7E57C2), fontSize: 16, fontWeight: FontWeight.bold),
@@ -80,36 +63,34 @@ class _RecentMovementsListState extends State<RecentMovementsList> {
           ],
         ),
         const SizedBox(height: 8),
-        AnimatedList(
-          key: _listKey,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          initialItemCount: 0,
-          itemBuilder: (context, index, animation) {
-             if (index >= widget.movements.length) return const SizedBox.shrink();
-             final movement = widget.movements[index];
-             return SlideTransition(
-               position: Tween<Offset>(
-                 begin: const Offset(1, 0),
-                 end: Offset.zero,
-               ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutQuart)),
-               child: Padding(
-                 padding: const EdgeInsets.only(bottom: 12.0),
-                 child: _buildMovementCard(movement),
-               ),
-             );
-          },
+        Column(
+          mainAxisSize: MainAxisSize.min,
+          children: List.generate(
+            movements.length,
+            (index) {
+              final movement = movements[index];
+              return Padding(
+                key: ValueKey('movement_${movement.id}'),
+                padding: const EdgeInsets.only(bottom: 12.0),
+                child: _buildMovementCard(movement),
+              );
+            },
+          ),
         ),
       ],
     );
   }
 
   Widget _buildMovementCard(MovementItem movement) {
-    return GlassContainer(
-      padding: const EdgeInsets.all(16),
-      borderRadius: 20,
-      animateBorder: false, 
-      child: Row(
+    return InkWell(
+      onTap: () => onItemTap(movement.id),
+      borderRadius: BorderRadius.circular(20),
+      child: GlassContainer(
+        key: ValueKey('glass_${movement.id}'),
+        padding: const EdgeInsets.all(16),
+        borderRadius: 20,
+        animateBorder: false,
+        child: Row(
         children: [
           Container(
             padding: const EdgeInsets.all(12),
@@ -168,6 +149,7 @@ class _RecentMovementsListState extends State<RecentMovementsList> {
              ],
            ),
         ],
+        ),
       ),
     );
   }
